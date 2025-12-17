@@ -3,101 +3,99 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\Visitor;
-use App\Models\VisitRecord;
-use App\Models\Department;
-use App\Models\Staff;
+use Illuminate\Support\Facades\DB; // This fixes the "Class DB not found" error
+use Carbon\Carbon;
+use App\Models\VisitRecord as Visit; // Use `VisitRecord` (table `visit_records`) as `Visit`
 
 class VisitorController extends Controller
 {
-    // 1. Show the Registration Form
-    public function create()
-    {
-        $departments = Department::all();
-        $staffMembers = Staff::all();
-        
-        return view('visitors.create', compact('departments', 'staffMembers'));
-    }
-
-    // 2. Save the Data (With Duplicate Check)
-    public function store(Request $request)
-    {
-        // Validate the input
-        $request->validate([
-            'Name' => 'required',
-            'ContactNumber' => 'required',
-            'Purpose' => 'required',
-            'DeptID' => 'required',
-            'StaffID' => 'required',
-        ]);
-
-        // A. Create or Find the Visitor
-        $visitor = Visitor::firstOrCreate(
-            ['Name' => $request->Name],
-            ['ContactNumber' => $request->ContactNumber]
-        );
-
-        // B. CHECK FOR DUPLICATES (The New Rule)
-        // Look for any visit by this person that is still 'Active'
-        $activeVisit = VisitRecord::where('VisitorID', $visitor->VisitorID)
-                        ->where('Status', 'Active')
-                        ->first();
-
-        if ($activeVisit) {
-            // If they are already here, stop and show an error
-            return redirect()->back()
-                ->with('error', 'Error: This visitor is already checked in and has not checked out yet!');
-        }
-
-        // C. Create the Visit Record if no duplicate found
-        VisitRecord::create([
-            'VisitorID' => $visitor->VisitorID,
-            'DeptID' => $request->DeptID,
-            'StaffID' => $request->StaffID,
-            'VisitDate' => now()->toDateString(),
-            'CheckInTime' => now(),
-            'Purpose' => $request->Purpose,
-            'Status' => 'Active'
-        ]);
-
-        return redirect()->route('visitors.create')->with('success', 'Visitor Registered Successfully!');
-    }
-
-    // 3. Show the Dashboard
+    // 1. Dashboard (Show Today's Visitors)
     public function index()
     {
-        $visits = VisitRecord::with(['visitor', 'department', 'staff'])
-                    ->orderBy('VisitDate', 'desc')
-                    ->orderBy('CheckInTime', 'desc')
-                    ->get();
+        // Get visits for today, ordered by newest first
+        // We use 'with' to load the related names (Visitor, Staff, Dept)
+        $visits = Visit::with(['visitor', 'staff', 'department'])
+                       ->whereDate('CheckInTime', Carbon::today())
+                       ->orderBy('CheckInTime', 'desc')
+                       ->get();
 
         return view('visitors.index', compact('visits'));
     }
 
-    // 4. Check Out a Visitor
-    public function checkOut($id)
+    // 2. Show Register Form
+    public function create()
     {
-        $visit = VisitRecord::findOrFail($id);
+        // Pass departments/staff to the dropdowns if needed
+        $departments = DB::table('departments')->get();
+        // Get only host staff (not security/admins if you prefer)
+        $staffMembers = DB::table('staff')->get(); 
 
-        $visit->update([
-            'CheckOutTime' => now(),
-            'Status' => 'Completed'
-        ]);
-
-        return redirect()->route('visitors.index')->with('success', 'Visitor Checked Out Successfully!');
+        return view('visitors.create', compact('departments', 'staffMembers'));
     }
 
-    // --- DELETE VISITOR (Admin Only) ---
-    public function destroy($id)
+    // 3. Store New Visitor
+    public function store(Request $request)
     {
-        // Double check permissions just in case
+        // Validate
+        $request->validate([
+            'Name' => 'required',
+            'DeptID' => 'required',
+            'StaffID' => 'required',
+            'Purpose' => 'required'
+        ]);
+
+        // 1. Create or Find Visitor (Simple version: always create new visitor profile for now)
+        // The `visitors` table uses `ContactNumber` (not `Phone`) and has no `Address` column.
+        $visitorID = DB::table('visitors')->insertGetId([
+            'Name' => $request->Name,
+            'ContactNumber' => $request->Phone ?? 'N/A',
+        ]);
+
+        // 2. Create the Visit Record
+        Visit::create([
+            'VisitorID' => $visitorID,
+            'DeptID' => $request->DeptID,
+            'StaffID' => $request->StaffID,
+            'Purpose' => $request->Purpose,
+            // `visit_records` requires `VisitDate` (no default). Use today's date.
+            'VisitDate' => Carbon::today()->toDateString(),
+            'CheckInTime' => now(),
+            'Status' => 'Active'
+        ]);
+
+        return redirect()->route('visitors.index')->with('success', 'Visitor registered successfully!');
+    }
+
+    // 4. Check Out Visitor
+    public function checkOut($id)
+    {
+        $visit = Visit::where('VisitID', $id)->first();
+
+        if ($visit) {
+            $visit->update([
+                'CheckOutTime' => now(),
+                'Status' => 'Completed'
+            ]);
+            return back()->with('success', 'Visitor checked out.');
+        }
+
+        return back()->with('error', 'Visit not found.');
+    }
+
+// --- DELETE VISITOR (Admin Only) ---
+public function destroy($id)
+    {
         if (session('RoleID') != 3) {
             return back()->with('error', 'Only Admins can delete records.');
         }
 
-        // Use DB or Model to delete
-        \Illuminate\Support\Facades\DB::table('visits')->where('VisitID', $id)->delete();
+        // We use 'VisitID' because that is what is in your Database
+        $deleted = \App\Models\VisitRecord::where('VisitID', $id)->delete();
 
-        return back()->with('success', 'Visitor record deleted successfully.');
+        if ($deleted) {
+            return back()->with('success', 'Visitor record deleted successfully.');
+        } else {
+            return back()->with('error', 'Could not delete. Record not found.');
+        }
     }
 }

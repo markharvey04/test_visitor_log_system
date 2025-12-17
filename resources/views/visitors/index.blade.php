@@ -96,8 +96,9 @@
             @endif
 
             <!-- LOGOUT -->
-            <a href="{{ route('logout') }}" class="btn btn-outline-danger btn-sm btn-round px-3">
+            <a href="{{ route('logout') }}" class="btn btn-outline-danger btn-sm btn-round px-3 py-1">
                 <i class="fa-solid fa-power-off"></i>
+                 Log Out 
             </a>
         </div>
     </div>
@@ -224,6 +225,7 @@
                                             @method('DELETE')
                                             <button type="submit" class="btn btn-light text-danger btn-sm btn-round hover-shadow" title="Delete">
                                                 <i class="fa-solid fa-trash-can"></i>
+                                                remove
                                             </button>
                                         </form>
                                     @endif
